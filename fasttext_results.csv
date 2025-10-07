@@ -1,0 +1,30 @@
+Dataset,Model Type,Training Time (s),Accuracy,Precision,Recall,F1-score
+amananandrai/ag-news-classification-dataset,FastText (BERT-tokenized),21.73,83.97,83.95,83.97,83.96
+amananandrai/ag-news-classification-dataset,FastText (Raw text),1.7,91.91,91.89,91.91,91.89
+amananandrai/ag-news-classification-dataset,FastText (BERT-tokenized),0.0,83.97,83.95,83.97,83.96
+amananandrai/ag-news-classification-dataset,FastText (BERT-tokenized),0.0,83.97,83.95,83.97,83.96
+amananandrai/ag-news-classification-dataset,FastText (Raw text),0.0,73.5,75.98,73.5,73.54
+amananandrai/ag-news-classification-dataset,FastText (BERT-tokenized),0.0,83.97,83.95,83.97,83.96
+amananandrai/ag-news-classification-dataset,FastText (Raw text),0.0,73.5,75.98,73.5,73.54
+irustandi/yelp-review-polarity/yelp_review_polarity_csv,FastText (BERT-tokenized),97.41,88.72,88.72,88.72,88.72
+irustandi/yelp-review-polarity/yelp_review_polarity_csv,FastText (Raw text),20.19,94.89,94.89,94.89,94.89
+soumikrakshit/yahoo-answers-dataset/yahoo_answers_csv,FastText (BERT-tokenized),245.72,59.61,59.2,59.61,59.36
+soumikrakshit/yahoo-answers-dataset/yahoo_answers_csv,FastText (Raw text),7.08,63.74,63.97,63.74,63.82
+amananandrai/ag-news-classification-dataset,FastText (BERT-tokenized),0.0,83.97,83.95,83.97,83.96
+amananandrai/ag-news-classification-dataset,FastText (Raw text),0.0,73.5,75.98,73.5,73.54
+amananandrai/ag-news-classification-dataset,FastText (BERT-tokenized),0.0,83.97,83.95,83.97,83.96
+amananandrai/ag-news-classification-dataset,FastText (Raw text),0.0,73.5,75.98,73.5,73.54
+irustandi/yelp-review-polarity/yelp_review_polarity_csv,FastText (BERT-tokenized),0.0,88.72,88.72,88.72,88.72
+irustandi/yelp-review-polarity/yelp_review_polarity_csv,FastText (Raw text),0.0,94.89,94.89,94.89,94.89
+soumikrakshit/yahoo-answers-dataset/yahoo_answers_csv,FastText (BERT-tokenized),0.0,59.61,59.2,59.61,59.36
+soumikrakshit/yahoo-answers-dataset/yahoo_answers_csv,FastText (Raw text),0.0,63.74,63.97,63.74,63.82
+kritanjalijain/amazon-reviews,FastText (BERT-tokenized),617.51,79.55,79.7,79.55,79.52
+kritanjalijain/amazon-reviews,FastText (Raw text),7.92,84.49,84.56,84.49,84.48
+amananandrai/ag-news-classification-dataset,FastText (BERT-tokenized),0.0,83.97,83.95,83.97,83.96
+amananandrai/ag-news-classification-dataset,FastText (Raw text),0.0,73.5,75.98,73.5,73.54
+amananandrai/ag-news-classification-dataset,FastText (BERT-tokenized),0.0,83.97,83.95,83.97,83.96
+amananandrai/ag-news-classification-dataset,FastText (Raw text),0.0,73.5,75.98,73.5,73.54
+amananandrai/ag-news-classification-dataset,FastText (BERT-tokenized),0.0,83.97,83.95,83.97,83.96
+amananandrai/ag-news-classification-dataset,FastText (Raw text),1.76,73.95,76.53,73.95,74.07
+bhavikardeshna/amazon-customerreviews-polarity,FastText (BERT-tokenized),614.03,79.42,79.61,79.42,79.39
+bhavikardeshna/amazon-customerreviews-polarity,FastText (Raw text),7.61,84.89,85.07,84.89,84.87
