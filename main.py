@@ -2,10 +2,30 @@ import os, time, fasttext, torch, numpy as np, pandas as pd
 from transformers import BertTokenizer, BertModel
 import kagglehub, shutil
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from sentence_transformers import SentenceTransformer
+
+
+
+def get_sbert_embeddings(texts, sbert_model, batch_size=32):
+    print(f"[INFO] Getting SBERT embeddings for {len(texts)} samples (batch={batch_size})...")
+    start_time = time.time()
+
+    embeddings = sbert_model.encode(
+        texts,
+        batch_size=batch_size,
+        show_progress_bar=True,
+        convert_to_numpy=True,
+        normalize_embeddings=False
+    )
+
+    total_time = time.time() - start_time
+    return embeddings, total_time
 
 
 def get_bert_embeddings(texts, tokenizer, bert_model, device="cpu", batch_size=4):
     embeddings = []
+    start_time = time.time()
+
     with torch.no_grad():
         for i in range(0, len(texts), batch_size):
             batch_texts = texts[i:i+batch_size]
@@ -14,7 +34,10 @@ def get_bert_embeddings(texts, tokenizer, bert_model, device="cpu", batch_size=4
             cls_embeddings = outputs.last_hidden_state[:, 0, :]  # CLS token
             embeddings.append(cls_embeddings.cpu().numpy())
             torch.cuda.empty_cache()
-    return np.vstack(embeddings)
+
+    total_time = time.time() - start_time
+    return np.vstack(embeddings), total_time
+
 
 def embedding_to_tokens(embeddings, precision=2):
     token_texts = []
@@ -52,21 +75,24 @@ def evaluate_fasttext(model, texts, true_labels):
     print(f"F1-score : {f1*100:.2f}%")
     return accuracy, precision, recall, f1
 
-def record_results(dataset_name, model_type, train_time, acc, prec, rec, f1, csv_file="fasttext_results.csv"):
+def record_results(dataset_name, model_type, train_time, acc, prec, rec, f1, emb_time=0.0, csv_file="fasttext_results.csv"):
     df_new = pd.DataFrame([{
         "Dataset": dataset_name,
         "Model Type": model_type,
+        "Embedding Time (s)": round(emb_time, 2),     # 🆕 added column
         "Training Time (s)": round(train_time, 2),
         "Accuracy": round(acc * 100, 2),
         "Precision": round(prec * 100, 2),
         "Recall": round(rec * 100, 2),
         "F1-score": round(f1 * 100, 2)
     }])
+
     if os.path.exists(csv_file):
         df_existing = pd.read_csv(csv_file)
         df_all = pd.concat([df_existing, df_new], ignore_index=True)
     else:
         df_all = df_new
+
     df_all.to_csv(csv_file, index=False)
     print(f"[INFO] Results saved to {csv_file}")
 
@@ -81,45 +107,64 @@ def download_dataset(handle: str):
 
 def load_and_normalize_dataset(csv_path):
     """
-    Loads a CSV file that may or may not have headers and tries to detect
-    which columns are text and which are labels.
+    Loads a CSV file and automatically:
+    - Detects label column (low cardinality, e.g. class or sentiment)
+    - Detects one or multiple text columns (title, body, question, answer, etc.)
+    - Combines multiple text columns into one string if necessary
     Returns: texts (list[str]), labels (list[str])
     """
+    import pandas as pd
+
+    # --- 1. Load CSV gracefully ---
     try:
         df = pd.read_csv(csv_path)
     except Exception:
         df = pd.read_csv(csv_path, header=None)
 
+    # --- 2. Generate column names if numeric ---
     if df.columns[0] == 0 or df.columns[0] == "0":
         df.columns = [f"col_{i}" for i in range(df.shape[1])]
 
-    possible_label_cols = [col for col in df.columns if any(k in str(col).lower() for k in ["class", "label", "category", "sentiment", "rating", "polarity"])]
-    possible_text_cols = [col for col in df.columns if any(k in str(col).lower() for k in ["title", "text", "content", "description", "review", "body", "question"])]
+    # --- 3. Heuristic: detect text & label columns ---
+    text_keywords = ["title", "text", "content", "description", "review", "body", "question", "answer", "passage"]
+    label_keywords = ["class", "label", "category", "sentiment", "rating", "polarity"]
 
+    possible_label_cols = [c for c in df.columns if any(k in str(c).lower() for k in label_keywords)]
+    possible_text_cols = [c for c in df.columns if any(k in str(c).lower() for k in text_keywords)]
+
+    # --- 4. Fallback detection based on content ---
     if not possible_text_cols or not possible_label_cols:
         for col in df.columns:
-            unique_ratio = df[col].nunique() / len(df)
-            sample_val = str(df[col].iloc[0])
-            if unique_ratio > 0.1 and len(sample_val.split()) > 3:
-                possible_text_cols.append(col)
-            elif unique_ratio < 0.1:
-                possible_label_cols.append(col)
+            unique_ratio = df[col].nunique() / max(len(df), 1)
+            sample_val = str(df[col].iloc[0]) if len(df) > 0 else ""
+            avg_len = df[col].astype(str).apply(lambda x: len(x.split())).mean()
+
+            # Text columns usually have higher uniqueness + longer average length
+            if unique_ratio > 0.1 and avg_len > 3:
+                if col not in possible_text_cols:
+                    possible_text_cols.append(col)
+            # Label columns usually have low uniqueness ratio
+            elif unique_ratio < 0.3:
+                if col not in possible_label_cols:
+                    possible_label_cols.append(col)
 
     if not possible_text_cols:
-        raise ValueError(f"❌ Could not detect text column in {csv_path}. Columns: {list(df.columns)}")
+        raise ValueError(f"❌ Could not detect text columns in {csv_path}. Columns: {list(df.columns)}")
     if not possible_label_cols:
-        raise ValueError(f"❌ Could not detect label column in {csv_path}. Columns: {list(df.columns)}")
+        raise ValueError(f"❌ Could not detect label columns in {csv_path}. Columns: {list(df.columns)}")
 
-    text_col = possible_text_cols[0]
+    # --- 5. Combine multiple text columns ---
+    df["__combined_text__"] = df[possible_text_cols].astype(str).agg(" ".join, axis=1)
+
+    # --- 6. Choose label column (first one is usually correct) ---
     label_col = possible_label_cols[0]
 
-    texts = df[text_col].astype(str).tolist()
+    texts = df["__combined_text__"].astype(str).tolist()
     labels = df[label_col].astype(str).tolist()
 
     return texts, labels
 
-
-def process_dataset(handle, tokenizer, bert_model, device="cpu"):
+def process_dataset(handle, tokenizer, bert_model, sbert_model, device="cpu"):
     print(f"\n============================")
     print(f"📦 Processing dataset: {handle}")
     print(f"============================")
@@ -144,39 +189,88 @@ def process_dataset(handle, tokenizer, bert_model, device="cpu"):
     train_csv = os.path.join(dataset_dir, "train.csv")
     test_csv = os.path.join(dataset_dir, "test.csv")
 
+
     df_train, labels_train = load_and_normalize_dataset(train_csv)
     df_test, labels_test = load_and_normalize_dataset(test_csv)
 
+
     base_name = handle.replace("/", "_")
-    train_emb_file = f"{base_name}_train_embeddings.npy"
-    test_emb_file = f"{base_name}_test_embeddings.npy"
-    ft_train_file = f"{base_name}_fasttext_train.txt"
-    ft_test_file = f"{base_name}_fasttext_test.txt"
-    ft_model_file = f"{base_name}_ft_model.bin"
 
-    if os.path.exists(train_emb_file):
-        embeddings = np.load(train_emb_file)
+    # ---------- BERT Embeddings ----------
+    bert_train_emb_file = f"{base_name}_bert_train_embeddings.npy"
+    bert_test_emb_file = f"{base_name}_bert_test_embeddings.npy"
+    bert_ft_train_file = f"{base_name}_bert_fasttext_train.txt"
+    bert_ft_test_file = f"{base_name}_bert_fasttext_test.txt"
+    bert_ft_model_file = f"{base_name}_bert_ft_model.bin"
+
+    if os.path.exists(bert_train_emb_file):
+        bert_embeddings = np.load(bert_train_emb_file)
+        emb_train_time = 0.0
     else:
-        embeddings = get_bert_embeddings(df_train, tokenizer, bert_model, device)
-        np.save(train_emb_file, embeddings)
+        bert_embeddings, emb_train_time = get_bert_embeddings(df_train, tokenizer, bert_model, device)
+        np.save(bert_train_emb_file, bert_embeddings)
 
-    if os.path.exists(test_emb_file):
-        embeddings_test = np.load(test_emb_file)
+    if os.path.exists(bert_test_emb_file):
+        bert_embeddings_test = np.load(bert_test_emb_file)
+        emb_test_time = 0.0
     else:
-        embeddings_test = get_bert_embeddings(df_test, tokenizer, bert_model, device)
-        np.save(test_emb_file, embeddings_test)
+        bert_embeddings_test, emb_test_time = get_bert_embeddings(df_test, tokenizer, bert_model, device)
+        np.save(bert_test_emb_file, bert_embeddings_test)
 
-    token_texts_train = embedding_to_tokens(embeddings)
-    token_texts_test = embedding_to_tokens(embeddings_test)
+    bert_total_emb_time = emb_train_time + emb_test_time
 
-    if not os.path.exists(ft_train_file):
-        prepare_fasttext_file(token_texts_train, labels_train, ft_train_file)
-    if not os.path.exists(ft_test_file):
-        prepare_fasttext_file(token_texts_test, labels_test, ft_test_file)
+    bert_token_texts_train = embedding_to_tokens(bert_embeddings)
+    bert_token_texts_test = embedding_to_tokens(bert_embeddings_test)
 
-    ft_model, train_time = train_fasttext(ft_train_file, model_path=ft_model_file, epoch=5, lr=1.0, wordNgrams=1, verbose=2)
-    acc, prec, rec, f1 = evaluate_fasttext(ft_model, token_texts_test, labels_test)
-    record_results(handle, "FastText (BERT-tokenized)", train_time, acc, prec, rec, f1)
+    if not os.path.exists(bert_ft_train_file):
+        prepare_fasttext_file(bert_token_texts_train, labels_train, bert_ft_train_file)
+    if not os.path.exists(bert_ft_test_file):
+        prepare_fasttext_file(bert_token_texts_test, labels_test, bert_ft_test_file)
+
+    bert_ft_model, bert_train_time = train_fasttext(bert_ft_train_file, model_path=bert_ft_model_file, epoch=5, lr=1.0,
+                                                    wordNgrams=1, verbose=2)
+    acc, prec, rec, f1 = evaluate_fasttext(bert_ft_model, bert_token_texts_test, labels_test)
+    record_results(handle, "FastText (BERT-tokenized)", bert_train_time, acc, prec, rec, f1,
+                   emb_time=bert_total_emb_time)
+
+
+    # ---------- SBERT Embeddings ----------
+    sbert_train_emb_file = f"{base_name}_sbert_train_embeddings.npy"
+    sbert_test_emb_file = f"{base_name}_sbert_test_embeddings.npy"
+    sbert_ft_train_file = f"{base_name}_sbert_fasttext_train.txt"
+    sbert_ft_test_file = f"{base_name}_sbert_fasttext_test.txt"
+    sbert_ft_model_file = f"{base_name}_sbert_ft_model.bin"
+
+    if os.path.exists(sbert_train_emb_file):
+        sbert_embeddings = np.load(sbert_train_emb_file)
+        sbert_emb_train_time = 0.0
+    else:
+        sbert_embeddings, sbert_emb_train_time = get_sbert_embeddings(df_train, sbert_model)
+        np.save(sbert_train_emb_file, sbert_embeddings)
+
+    if os.path.exists(sbert_test_emb_file):
+        sbert_embeddings_test = np.load(sbert_test_emb_file)
+        sbert_emb_test_time = 0.0
+    else:
+        sbert_embeddings_test, sbert_emb_test_time = get_sbert_embeddings(df_test, sbert_model)
+        np.save(sbert_test_emb_file, sbert_embeddings_test)
+
+    sbert_total_emb_time = sbert_emb_train_time + sbert_emb_test_time
+
+    sbert_token_texts_train = embedding_to_tokens(sbert_embeddings)
+    sbert_token_texts_test = embedding_to_tokens(sbert_embeddings_test)
+
+    if not os.path.exists(sbert_ft_train_file):
+        prepare_fasttext_file(sbert_token_texts_train, labels_train, sbert_ft_train_file)
+    if not os.path.exists(sbert_ft_test_file):
+        prepare_fasttext_file(sbert_token_texts_test, labels_test, sbert_ft_test_file)
+
+    sbert_ft_model, sbert_train_time = train_fasttext(sbert_ft_train_file, model_path=sbert_ft_model_file, epoch=5,
+                                                      lr=1.0, wordNgrams=1, verbose=2)
+    acc_s, prec_s, rec_s, f1_s = evaluate_fasttext(sbert_ft_model, sbert_token_texts_test, labels_test)
+    record_results(handle, "FastText (SBERT-tokenized)", sbert_train_time, acc_s, prec_s, rec_s, f1_s,
+                   emb_time=sbert_total_emb_time)
+
 
     ft_train_raw = f"{base_name}_fasttext_train_raw.txt"
     ft_test_raw = f"{base_name}_fasttext_test_raw.txt"
@@ -189,7 +283,7 @@ def process_dataset(handle, tokenizer, bert_model, device="cpu"):
 
     ft_raw_model, train_time_raw = train_fasttext(ft_train_raw, model_path=ft_model_raw, epoch=5, lr=1.0, wordNgrams=2, verbose=2)
     acc_r, prec_r, rec_r, f1_r = evaluate_fasttext(ft_raw_model, df_test, labels_test)
-    record_results(handle, "FastText (Raw text)", train_time_raw, acc_r, prec_r, rec_r, f1_r)
+    record_results(handle, "FastText (Raw text)", train_time_raw, acc_r, prec_r, rec_r, f1_r, emb_time=0.0)
 
 
 
@@ -197,6 +291,8 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
     bert_model = BertModel.from_pretrained("bert-base-uncased").to(device).eval()
+    sbert_model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
+
     kaggle_datasets = [
         "amananandrai/ag-news-classification-dataset",
         "irustandi/yelp-review-polarity",
@@ -210,7 +306,11 @@ if __name__ == "__main__":
     for ds in kaggle_datasets:
         try:
             download_dataset(ds)
-            process_dataset(ds, tokenizer, bert_model, device)
+            process_dataset(ds, tokenizer, bert_model, sbert_model, device)
         except Exception as e:
             print(f"[ERROR] Failed on dataset {ds}: {e}")
+
+
+
+
 
