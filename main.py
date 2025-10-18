@@ -1,34 +1,36 @@
 import os, time, fasttext, torch, numpy as np, pandas as pd
 from transformers import BertTokenizer, BertModel
-import kagglehub, shutil
+import kagglehub, shutil, zipfile
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from sentence_transformers import SentenceTransformer
 
 
-
-def get_sbert_embeddings(texts, sbert_model, batch_size=32):
-    print(f"[INFO] Getting SBERT embeddings for {len(texts)} samples (batch={batch_size})...")
+def get_sbert_embeddings(texts, sbert_model, device="cpu", batch_size=16):
+    print(f"[INFO] Getting SBERT embeddings for {len(texts)} samples (batch={batch_size}) on {device}...")
     start_time = time.time()
+
+    sbert_model.to(device)
 
     embeddings = sbert_model.encode(
         texts,
         batch_size=batch_size,
         show_progress_bar=True,
         convert_to_numpy=True,
-        normalize_embeddings=False
+        normalize_embeddings=False,
+        device=device
     )
 
     total_time = time.time() - start_time
     return embeddings, total_time
 
 
-def get_bert_embeddings(texts, tokenizer, bert_model, device="cpu", batch_size=4):
+def get_bert_embeddings(texts, tokenizer, bert_model, device="cpu", batch_size=16):
     embeddings = []
     start_time = time.time()
 
     with torch.no_grad():
         for i in range(0, len(texts), batch_size):
-            batch_texts = texts[i:i+batch_size]
+            batch_texts = texts[i:i + batch_size]
             encoded_input = tokenizer(batch_texts, padding=True, truncation=True, return_tensors="pt").to(device)
             outputs = bert_model(**encoded_input)
             cls_embeddings = outputs.last_hidden_state[:, 0, :]  # CLS token
@@ -46,10 +48,15 @@ def embedding_to_tokens(embeddings, precision=2):
         token_texts.append(" ".join(tokens))
     return token_texts
 
+
 def prepare_fasttext_file(texts, labels, filename):
     with open(filename, 'w', encoding='utf-8') as f:
         for text, label in zip(texts, labels):
-            f.write(f"__label__{label} {text}\n")
+            text = str(text).strip()
+            label = str(label).strip()
+            if text:  # skip empty lines
+                f.write(f"__label__{label} {text}\n")
+
 
 def train_fasttext(train_file, model_path, **kwargs):
     if os.path.exists(model_path):
@@ -63,23 +70,26 @@ def train_fasttext(train_file, model_path, **kwargs):
     print(f"[INFO] Training completed in {duration:.2f}s for {train_file}")
     return model, duration
 
+
 def evaluate_fasttext(model, texts, true_labels):
     preds = [model.predict(text)[0][0].replace("__label__", "") for text in texts]
     true_labels = [str(lbl) for lbl in true_labels]
     accuracy = accuracy_score(true_labels, preds)
     precision, recall, f1, _ = precision_recall_fscore_support(true_labels, preds, average="weighted")
     print("\n📊 Evaluation Metrics:")
-    print(f"Accuracy : {accuracy*100:.2f}%")
-    print(f"Precision: {precision*100:.2f}%")
-    print(f"Recall   : {recall*100:.2f}%")
-    print(f"F1-score : {f1*100:.2f}%")
+    print(f"Accuracy : {accuracy * 100:.2f}%")
+    print(f"Precision: {precision * 100:.2f}%")
+    print(f"Recall   : {recall * 100:.2f}%")
+    print(f"F1-score : {f1 * 100:.2f}%")
     return accuracy, precision, recall, f1
 
-def record_results(dataset_name, model_type, train_time, acc, prec, rec, f1, emb_time=0.0, csv_file="fasttext_results.csv"):
+
+def record_results(dataset_name, model_type, train_time, acc, prec, rec, f1, emb_time=0.0,
+                   csv_file="fasttext_results.csv"):
     df_new = pd.DataFrame([{
         "Dataset": dataset_name,
         "Model Type": model_type,
-        "Embedding Time (s)": round(emb_time, 2),     # 🆕 added column
+        "Embedding Time (s)": round(emb_time, 2),
         "Training Time (s)": round(train_time, 2),
         "Accuracy": round(acc * 100, 2),
         "Precision": round(prec * 100, 2),
@@ -96,11 +106,19 @@ def record_results(dataset_name, model_type, train_time, acc, prec, rec, f1, emb
     df_all.to_csv(csv_file, index=False)
     print(f"[INFO] Results saved to {csv_file}")
 
+
 def download_dataset(handle: str):
     cache_path = kagglehub.dataset_download(handle)
     project_data_dir = os.path.join("data", handle)
     os.makedirs(project_data_dir, exist_ok=True)
-    shutil.copytree(cache_path, project_data_dir, dirs_exist_ok=True)
+
+    # Handle zipped datasets
+    if cache_path.endswith(".zip"):
+        with zipfile.ZipFile(cache_path, 'r') as zip_ref:
+            zip_ref.extractall(project_data_dir)
+    else:
+        shutil.copytree(cache_path, project_data_dir, dirs_exist_ok=True)
+
     print("Dataset copied to project folder:", project_data_dir)
     return project_data_dir
 
@@ -136,14 +154,11 @@ def load_and_normalize_dataset(csv_path):
     if not possible_text_cols or not possible_label_cols:
         for col in df.columns:
             unique_ratio = df[col].nunique() / max(len(df), 1)
-            sample_val = str(df[col].iloc[0]) if len(df) > 0 else ""
             avg_len = df[col].astype(str).apply(lambda x: len(x.split())).mean()
 
-            # Text columns usually have higher uniqueness + longer average length
             if unique_ratio > 0.1 and avg_len > 3:
                 if col not in possible_text_cols:
                     possible_text_cols.append(col)
-            # Label columns usually have low uniqueness ratio
             elif unique_ratio < 0.3:
                 if col not in possible_label_cols:
                     possible_label_cols.append(col)
@@ -164,12 +179,13 @@ def load_and_normalize_dataset(csv_path):
 
     return texts, labels
 
+
 def process_dataset(handle, tokenizer, bert_model, sbert_model, device="cpu"):
     print(f"\n============================")
-    print(f"📦 Processing dataset: {handle}")
+    print(f"📦 Processing dataset: {handle} on {device}")
     print(f"============================")
 
-
+    # Adjust handle paths for nested datasets
     if handle == "soumikrakshit/yahoo-answers-dataset":
         handle = "soumikrakshit/yahoo-answers-dataset/yahoo_answers_csv"
     elif handle == "irustandi/yelp-review-polarity":
@@ -179,24 +195,15 @@ def process_dataset(handle, tokenizer, bert_model, sbert_model, device="cpu"):
     train_file_path = os.path.join(dataset_dir, "train.csv")
     test_file_path = os.path.join(dataset_dir, "test.csv")
 
-
-
-
     if not os.path.exists(train_file_path) or not os.path.exists(test_file_path):
-        print(f"[WARNING] Missing train/test CSV in {dataset_dir}. Skipping...")
-        return
+        raise FileNotFoundError(f"Missing train.csv or test.csv in {dataset_dir}. Please check dataset structure.")
 
-    train_csv = os.path.join(dataset_dir, "train.csv")
-    test_csv = os.path.join(dataset_dir, "test.csv")
-
-
-    df_train, labels_train = load_and_normalize_dataset(train_csv)
-    df_test, labels_test = load_and_normalize_dataset(test_csv)
-
+    df_train, labels_train = load_and_normalize_dataset(train_file_path)
+    df_test, labels_test = load_and_normalize_dataset(test_file_path)
 
     base_name = handle.replace("/", "_")
 
-    # ---------- BERT Embeddings ----------
+    print(f"---------- BERT Embeddings ----------")
     bert_train_emb_file = f"{base_name}_bert_train_embeddings.npy"
     bert_test_emb_file = f"{base_name}_bert_test_embeddings.npy"
     bert_ft_train_file = f"{base_name}_bert_fasttext_train.txt"
@@ -217,7 +224,7 @@ def process_dataset(handle, tokenizer, bert_model, sbert_model, device="cpu"):
         bert_embeddings_test, emb_test_time = get_bert_embeddings(df_test, tokenizer, bert_model, device)
         np.save(bert_test_emb_file, bert_embeddings_test)
 
-    bert_total_emb_time = emb_train_time + emb_test_time
+    bert_total_emb_time = emb_train_time
 
     bert_token_texts_train = embedding_to_tokens(bert_embeddings)
     bert_token_texts_test = embedding_to_tokens(bert_embeddings_test)
@@ -233,8 +240,7 @@ def process_dataset(handle, tokenizer, bert_model, sbert_model, device="cpu"):
     record_results(handle, "FastText (BERT-tokenized)", bert_train_time, acc, prec, rec, f1,
                    emb_time=bert_total_emb_time)
 
-
-    # ---------- SBERT Embeddings ----------
+    print(f"---------- SBERT Embeddings ----------")
     sbert_train_emb_file = f"{base_name}_sbert_train_embeddings.npy"
     sbert_test_emb_file = f"{base_name}_sbert_test_embeddings.npy"
     sbert_ft_train_file = f"{base_name}_sbert_fasttext_train.txt"
@@ -245,17 +251,17 @@ def process_dataset(handle, tokenizer, bert_model, sbert_model, device="cpu"):
         sbert_embeddings = np.load(sbert_train_emb_file)
         sbert_emb_train_time = 0.0
     else:
-        sbert_embeddings, sbert_emb_train_time = get_sbert_embeddings(df_train, sbert_model)
+        sbert_embeddings, sbert_emb_train_time = get_sbert_embeddings(df_train, sbert_model, device)
         np.save(sbert_train_emb_file, sbert_embeddings)
 
     if os.path.exists(sbert_test_emb_file):
         sbert_embeddings_test = np.load(sbert_test_emb_file)
         sbert_emb_test_time = 0.0
     else:
-        sbert_embeddings_test, sbert_emb_test_time = get_sbert_embeddings(df_test, sbert_model)
+        sbert_embeddings_test, sbert_emb_test_time = get_sbert_embeddings(df_test, sbert_model, device)
         np.save(sbert_test_emb_file, sbert_embeddings_test)
 
-    sbert_total_emb_time = sbert_emb_train_time + sbert_emb_test_time
+    sbert_total_emb_time = sbert_emb_train_time
 
     sbert_token_texts_train = embedding_to_tokens(sbert_embeddings)
     sbert_token_texts_test = embedding_to_tokens(sbert_embeddings_test)
@@ -271,7 +277,7 @@ def process_dataset(handle, tokenizer, bert_model, sbert_model, device="cpu"):
     record_results(handle, "FastText (SBERT-tokenized)", sbert_train_time, acc_s, prec_s, rec_s, f1_s,
                    emb_time=sbert_total_emb_time)
 
-
+    print(f"---------- FASTTEXT NGRAM ----------")
     ft_train_raw = f"{base_name}_fasttext_train_raw.txt"
     ft_test_raw = f"{base_name}_fasttext_test_raw.txt"
     ft_model_raw = f"{base_name}_ft_model_raw.bin"
@@ -281,10 +287,10 @@ def process_dataset(handle, tokenizer, bert_model, sbert_model, device="cpu"):
     if not os.path.exists(ft_test_raw):
         prepare_fasttext_file(df_test, labels_test, ft_test_raw)
 
-    ft_raw_model, train_time_raw = train_fasttext(ft_train_raw, model_path=ft_model_raw, epoch=5, lr=1.0, wordNgrams=2, verbose=2)
+    ft_raw_model, train_time_raw = train_fasttext(ft_train_raw, model_path=ft_model_raw, epoch=5, lr=1.0, wordNgrams=2,
+                                                  verbose=2)
     acc_r, prec_r, rec_r, f1_r = evaluate_fasttext(ft_raw_model, df_test, labels_test)
     record_results(handle, "FastText (Raw text)", train_time_raw, acc_r, prec_r, rec_r, f1_r, emb_time=0.0)
-
 
 
 if __name__ == "__main__":
@@ -309,8 +315,3 @@ if __name__ == "__main__":
             process_dataset(ds, tokenizer, bert_model, sbert_model, device)
         except Exception as e:
             print(f"[ERROR] Failed on dataset {ds}: {e}")
-
-
-
-
-

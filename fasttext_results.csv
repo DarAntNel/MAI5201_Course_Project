@@ -1,0 +1,16 @@
+Dataset,Model Type,Embedding Time (s),Training Time (s),Accuracy,Precision,Recall,F1-score
+amananandrai/ag-news-classification-dataset,FastText (BERT-tokenized),339.46,24.0,83.92,83.89,83.92,83.9
+amananandrai/ag-news-classification-dataset,FastText (SBERT-tokenized),35.13,9.13,86.33,86.33,86.33,86.33
+amananandrai/ag-news-classification-dataset,FastText (Raw text),0.0,1.65,91.82,91.8,91.82,91.8
+irustandi/yelp-review-polarity/yelp_review_polarity_csv,FastText (BERT-tokenized),4286.7,107.03,88.67,88.67,88.67,88.67
+irustandi/yelp-review-polarity/yelp_review_polarity_csv,FastText (SBERT-tokenized),355.88,34.13,87.77,87.77,87.77,87.77
+irustandi/yelp-review-polarity/yelp_review_polarity_csv,FastText (Raw text),0.0,22.4,94.99,94.99,94.99,94.99
+soumikrakshit/yahoo-answers-dataset/yahoo_answers_csv,FastText (BERT-tokenized),8502.61,311.21,63.36,62.95,63.36,63.12
+soumikrakshit/yahoo-answers-dataset/yahoo_answers_csv,FastText (SBERT-tokenized),2041.1,107.07,72.38,71.88,72.38,72.02
+soumikrakshit/yahoo-answers-dataset/yahoo_answers_csv,FastText (Raw text),0.0,40.63,68.5,68.43,68.5,68.44
+kritanjalijain/amazon-reviews,FastText (BERT-tokenized),14525.9,649.26,89.41,89.43,89.41,89.41
+kritanjalijain/amazon-reviews,FastText (SBERT-tokenized),2090.96,268.0,83.94,83.96,83.94,83.94
+kritanjalijain/amazon-reviews,FastText (Raw text),0.0,81.76,93.6,93.6,93.6,93.6
+bhavikardeshna/amazon-customerreviews-polarity,FastText (BERT-tokenized),16139.61,665.54,89.42,89.44,89.42,89.41
+bhavikardeshna/amazon-customerreviews-polarity,FastText (SBERT-tokenized),2158.4,268.36,83.96,83.99,83.96,83.95
+bhavikardeshna/amazon-customerreviews-polarity,FastText (Raw text),0.0,82.28,93.6,93.6,93.6,93.6
