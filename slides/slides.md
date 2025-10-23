@@ -872,7 +872,7 @@ class: text-center
 <p class="text-3xl font-bold text-blue-400">Questions?</p>
 
 <div class="mt-6 text-lg opacity-80">
-  <p class="font-semibold">Feliciann Elliot • Daryl Nelson</p>
+  <p class="font-semibold">Feliciann Elliot • Daryl Nelson • Hilton Sarius</p>
   <p class="mt-4">University of Guyana</p>
   <p>MAI5201 - Natural Language Processing</p>
 </div>
