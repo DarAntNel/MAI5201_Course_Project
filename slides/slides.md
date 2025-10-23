@@ -22,6 +22,7 @@ mdc: true
   <div class="mt-4 text-xl">
     <p class="mb-2 font-semibold">Group Members</p>
     <p>Feliciann Elliot</p>
+    <p>Hilton Sarius</p>
     <p>Daryl Nelson</p>
   </div>
   
