@@ -1,7 +1,7 @@
-node_modules
-.DS_Store
-dist
-*.local
-.vite-inspect
-.remote-assets
-components.d.ts
+/slides/node_modules
+/slides/.DS_Store
+/slides/dist
+/slides/*.local
+/slides/.vite-inspect
+/slides/.remote-assets
+/slides/components.d.ts
